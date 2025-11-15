@@ -4,7 +4,7 @@
   import { user, followUsers } from '$lib/stores/user';
   import { getFollowListById, getAuthorProfile, getProfileInfoForEntries } from '$lib/services/follow-list.service';
   import { goto } from '$app/navigation';
-  import type { FollowList, FollowListEntry } from '$lib/types/follow-list';
+  import { FOLLOW_LIST_KIND, type FollowList, type FollowListEntry } from '$lib/types/follow-list';
   import { getRelativeTime } from '$lib/utils/date';
   import PostTimeline from '$lib/components/PostTimeline.svelte';
   import PublicKeyDisplay from '$lib/components/PublicKeyDisplay.svelte';
@@ -274,7 +274,12 @@
             </div>
             <div class="flex ml-1 mt-2 items-center flex-wrap">
             <span class="text-xs text-gray-500 mb-1">
-              <CopyEvent eventId={followList.eventId} pubkey={followList.pubkey} />
+              <CopyEvent
+                eventId={followList.eventId}
+                identifier={followList.id}
+                pubkey={followList.pubkey}
+                kind={FOLLOW_LIST_KIND}
+              />
             </span>
           </div>
         </div>

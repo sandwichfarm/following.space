@@ -2,22 +2,34 @@
   import { nip19 } from 'nostr-tools';
   import { DEFAULT_RELAYS } from '$lib/nostr/ndk';
   
-  export let eventId: string;
+  export let eventId: string | undefined;
+  export let identifier: string | undefined;
   export let pubkey: string;
   export let kind: number = 30001; // Default kind for follow list
   
   let copied = false;
   
-  function copyEvent() {
-    // Generate nevent with nostr-tools
-    const nevent = nip19.neventEncode({
-      id: eventId,
+  function buildNostrLink(): string {
+    if (!identifier) {
+      throw new Error('Missing identifier for addressable event');
+    }
+    const naddr = nip19.naddrEncode({
+      identifier,
       relays: DEFAULT_RELAYS,
-      author: pubkey,
-      kind: kind
+      kind,
+      pubkey
     });
-    
-    const nostrLink = `nostr:${nevent}`;
+    return `nostr:${naddr}`;
+  }
+  
+  function copyEvent() {
+    let nostrLink: string;
+    try {
+      nostrLink = buildNostrLink();
+    } catch (error) {
+      console.error('Failed to encode Nostr link:', error);
+      return;
+    }
     
     // Copy to clipboard using execCommand as fallback
     try {
