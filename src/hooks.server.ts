@@ -3,10 +3,18 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { generatePreviewImage } from '$lib/services/preview-image.service';
+import { nip19 } from 'nostr-tools';
 import { getFollowListById } from '$lib/services/follow-list.service';
 import { ndk } from '$lib/nostr/ndk';
 import type { FollowList } from '$lib/types/follow-list';
+import { FOLLOW_LIST_KIND } from '$lib/types/follow-list';
+
+type AddressPointer = {
+    identifier: string;
+    pubkey: string;
+    kind: number;
+    relays?: string[];
+};
 
 // Debug logging configuration
 const DEBUG = true;
@@ -44,14 +52,33 @@ export const handle: Handle = async ({ event, resolve }) => {
     // log IP address
     const url = new URL(event.request.url);
     const pathname = url.pathname;
+    let listId: string | null = null;
+    let pubKey: string | null = null;
 
-    // Only handle paths that match the follow list pattern
-    const followListMatch = pathname.match(/^\/d\/([a-zA-Z0-9-]+)$/);
+    const naddrMatch = pathname.match(/^\/(naddr1[0-9a-z]+)$/);
+    if (naddrMatch) {
+        try {
+            const decoded = nip19.decode(naddrMatch[1]);
+            if (decoded.type === 'naddr') {
+                const pointer = decoded.data as AddressPointer;
+                if (pointer.kind === FOLLOW_LIST_KIND) {
+                    listId = pointer.identifier;
+                    pubKey = pointer.pubkey;
+                }
+            }
+        } catch (error) {
+            console.error('Error decoding naddr for preview generation:', error);
+        }
+    } else {
+        // Legacy /d/<id> pattern
+        const followListMatch = pathname.match(/^\/d\/([a-zA-Z0-9-]+)$/);
+        if (followListMatch) {
+            listId = followListMatch[1];
+            pubKey = url.searchParams.get('p');
+        }
+    }
 
-    if (followListMatch) {
-        // parse from /d/<listId>?p=<pubKey>
-        const listId = followListMatch[1];
-        const pubKey = url.searchParams.get('p');
+    if (listId) {
         const userAgent = event.request.headers.get('user-agent') || '';
 
         // Check if this is a bot or social media crawler, including Signal
@@ -131,6 +158,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 
                         logDebug('[!imageExists] Generating image');
 
+                        // Dynamic import to avoid loading canvas in dev mode until needed
+                        const { generatePreviewImage } = await import('$lib/services/preview-image.service');
                         const imagePath = await withTimeout(
                             generatePreviewImage(followList, cachePath),
                             10000,

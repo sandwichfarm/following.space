@@ -3,6 +3,7 @@ import { NDKEvent, NDKKind } from '@nostr-dev-kit/ndk';
 import { ndk } from '$lib/nostr/ndk';
 import { browser } from '$app/environment';
 import { isLoggedIn } from './login';
+import { buildPublishRelaySet } from '$lib/utils/relays';
 
 export interface UserProfile {
     pubkey: string;
@@ -12,6 +13,8 @@ export interface UserProfile {
     npub?: string;
     following: Set<string>;
     relays: Set<string>;
+    writeRelays: Set<string>;
+    readRelays: Set<string>;
 }
 
 export interface FollowSnapshot {
@@ -121,11 +124,15 @@ export async function loadUser(): Promise<void> {
             try {
                 // Parse cached user with special handling for Set objects
                 const parsedUser = JSON.parse(cachedUser, (key, value) => {
-                    if (key === 'following' || key === 'relays') {
+                    if (key === 'following' || key === 'relays' || key === 'writeRelays' || key === 'readRelays') {
                         return new Set(value);
                     }
                     return value;
-                });
+                }) as UserProfile;
+
+                parsedUser.relays ??= new Set<string>();
+                parsedUser.writeRelays ??= new Set(parsedUser.relays);
+                parsedUser.readRelays ??= new Set(parsedUser.relays);
 
                 // Only use cache if pubkey matches the current signer
                 const userNpub = await ndk.signer.user();
@@ -184,7 +191,9 @@ export async function loadUserProfile() {
         about: ndkUser.profile?.about,
         npub: ndkUser.npub,
         following: new Set<string>(),
-        relays: new Set<string>()
+        relays: new Set<string>(),
+        writeRelays: new Set<string>(),
+        readRelays: new Set<string>()
     };
 
     // Get the user's follow list (NIP-02)
@@ -220,11 +229,30 @@ export async function loadUserProfile() {
         if (event.tags.length > 0) {
             for (const tag of event.tags) {
                 if (tag[0] === 'r' && tag[1]) {
-                    userProfile.relays.add(tag[1]);
+                    const relayUrl = tag[1];
+                    const markerRaw = (tag[2] || '').toString().toLowerCase();
+                    const marker = markerRaw.replace(/[^a-z]/g, '');
+                    const isWrite = !marker || marker === 'write' || marker === 'readwrite' || marker === 'both';
+                    const isRead = !marker || marker === 'read' || marker === 'readwrite' || marker === 'both';
+
+                    userProfile.relays.add(relayUrl);
+                    if (isWrite) {
+                        userProfile.writeRelays.add(relayUrl);
+                    }
+                    if (isRead) {
+                        userProfile.readRelays.add(relayUrl);
+                    }
                 }
             }
         }
     }
+    if (userProfile.writeRelays.size === 0) {
+        userProfile.relays.forEach((relay) => userProfile.writeRelays.add(relay));
+    }
+    if (userProfile.readRelays.size === 0) {
+        userProfile.relays.forEach((relay) => userProfile.readRelays.add(relay));
+    }
+
     // Save the user profile to the store and cache
     user.set(userProfile);
     // append the global ndk instance with relays that are not already in the array
@@ -386,7 +414,9 @@ export async function followUsers(pubkeysToFollow: string[]): Promise<boolean> {
         // Sign with the extension
         await event.sign();
 
-        event.publish()
+        const relaySet = buildPublishRelaySet(currentUser);
+        event.ndk = ndk;
+        event.publish(relaySet);
 
         // Save a snapshot of the follow list
         saveFollowSnapshot(event, pubkeys);
@@ -435,7 +465,9 @@ export async function unfollowUsers(pubkeysToUnfollow: string[]): Promise<boolea
         // Sign with the extension
         await event.sign();
 
-        event.publish();
+        const relaySet = buildPublishRelaySet(currentUser);
+        event.ndk = ndk;
+        event.publish(relaySet);
 
         // Save a snapshot of the follow list
         saveFollowSnapshot(event, pubkeys);
@@ -478,7 +510,9 @@ export async function restoreFollowSnapshot(snapshot: FollowSnapshot): Promise<b
 
         // Sign with the extension
         await event.sign();
-        await event.publish()
+        const relaySet = buildPublishRelaySet(currentUser);
+        event.ndk = ndk;
+        await event.publish(relaySet);
 
         // Update the user's following set
         currentUser.following = new Set<string>(snapshot.pubkeys);

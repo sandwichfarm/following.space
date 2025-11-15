@@ -2,22 +2,33 @@
   import { nip19 } from 'nostr-tools';
   import { DEFAULT_RELAYS } from '$lib/nostr/ndk';
   
-  export let eventId: string;
+  export let identifier: string | undefined;
   export let pubkey: string;
   export let kind: number = 30001; // Default kind for follow list
   
   let copied = false;
   
-  function copyEvent() {
-    // Generate nevent with nostr-tools
-    const nevent = nip19.neventEncode({
-      id: eventId,
-      relays: DEFAULT_RELAYS,
-      author: pubkey,
-      kind: kind
+  function buildNostrLink(): string {
+    if (!identifier) {
+      throw new Error('Missing identifier for addressable event');
+    }
+    const naddr = nip19.naddrEncode({
+      identifier,
+      kind,
+      pubkey,
+      relays: DEFAULT_RELAYS
     });
-    
-    const nostrLink = `nostr:${nevent}`;
+    return `nostr:${naddr}`;
+  }
+  
+  function copyEvent() {
+    let nostrLink: string;
+    try {
+      nostrLink = buildNostrLink();
+    } catch (error) {
+      console.error('Failed to encode Nostr link:', error);
+      return;
+    }
     
     // Copy to clipboard using execCommand as fallback
     try {
@@ -56,11 +67,11 @@
 <button 
   on:click={copyEvent} 
   class="inline-flex items-center justify-center px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors w-[90px]"
-  title="Copy Nostr event link"
+  title="Copy nostr addressable link"
 >
   {#if copied}
     <span>Copied!</span>
   {:else}
     <span>Copy Event</span>
   {/if}
-</button> 
+</button>

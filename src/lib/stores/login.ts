@@ -11,7 +11,7 @@ import {
 import { ndk } from '$lib/nostr/ndk';
 import { nip04, nip44 } from 'nostr-tools';
 import * as nostrTools from 'nostr-tools';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { FOLLOW_LIST_KIND } from '$lib/types/follow-list';
 
 // Login method types

@@ -8,5 +8,11 @@ export default defineConfig({
 			allow: ['cache']
 		},
 		allowedHosts: ['following.space', 'staging.following.space']
+	},
+	ssr: {
+		noExternal: process.env.NODE_ENV === 'production' ? ['canvas', 'node-canvas-with-twemoji-and-discord-emoji'] : []
+	},
+	optimizeDeps: {
+		exclude: ['canvas', 'node-canvas-with-twemoji-and-discord-emoji']
 	}
 });

@@ -1,5 +1,5 @@
 import { ndk } from '$lib/nostr/ndk';
-import NDK, { NDKEvent, type NDKFilter } from '@nostr-dev-kit/ndk';
+import NDK, { NDKEvent, type NDKFilter, NDKRelaySet } from '@nostr-dev-kit/ndk';
 import {
     FOLLOW_LIST_KIND,
     parseFollowListEvent,
@@ -10,7 +10,16 @@ import type {
     FollowListEntry
 } from '$lib/types/follow-list';
 import { getProfileByPubkey, loadUser, user } from '$lib/stores/user';
-import { get } from 'svelte/store';
+import { buildPublishRelaySet } from '$lib/utils/relays';
+import {
+    addEvent,
+    addEvents,
+    eventsStore,
+    getParameterizedReplaceableEvent,
+    selectParameterizedEvent
+} from '$lib/stores/events';
+import { derived, get } from 'svelte/store';
+import type { Readable } from 'svelte/store';
 import { filterFollowLists } from './filter';
 
 export const LIST_LIMIT = 20;
@@ -20,6 +29,18 @@ const DEBUG = true;
 const logDebug = (...args: any[]) => {
     if (DEBUG) console.log('[Follow Pack Service]', ...args);
 };
+
+export function getFollowListFromCache(identifier: string, pubkey: string): FollowList | null {
+    const event = getParameterizedReplaceableEvent(FOLLOW_LIST_KIND, pubkey, identifier);
+    return event ? parseFollowListEvent(event) : null;
+}
+
+export function createFollowListStore(identifier: string, pubkey: string): Readable<FollowList | null> {
+    return derived(eventsStore, (state) => {
+        const event = selectParameterizedEvent(state, FOLLOW_LIST_KIND, pubkey, identifier);
+        return event ? parseFollowListEvent(event) : null;
+    });
+}
 
 /**
  * Get a list of the most recent follow lists from relays
@@ -48,6 +69,7 @@ export async function getFollowLists(limit: number = LIST_LIMIT, since?: number,
 
         const events = await ndk.fetchEvents(filter);
         const eventsArray = Array.from(events);
+        addEvents(eventsArray);
         logDebug(`Fetched ${eventsArray.length} events`);
 
         // Convert events to FollowList objects
@@ -139,6 +161,13 @@ export async function getFollowListById(id: string, pubkey?: string): Promise<Fo
     logDebug('Fetching follow list by ID:', id, pubkey);
 
     try {
+        if (pubkey) {
+            const cached = getFollowListFromCache(id, pubkey);
+            if (cached) {
+                logDebug('Returning cached follow list for:', id, pubkey);
+                return cached;
+            }
+        }
         // Fetch the specific event by ID
         // const filter = { ids: [id] };
         // fetch by filtering for d tag
@@ -151,6 +180,7 @@ export async function getFollowListById(id: string, pubkey?: string): Promise<Fo
 
         const events = await ndk.fetchEvents(filter);
         const eventsArray = Array.from(events);
+        addEvents(eventsArray);
         logDebug(`Fetched ${eventsArray.length} events`);
 
         // Find the event
@@ -232,8 +262,12 @@ export async function publishFollowList(
             await ndk.connect();
         }
         event.ndk = ndk;
-        await event.publish();
 
+        const relaySet = buildPublishRelaySet(currentUser);
+        const publishedRelays = await event.publish(relaySet);
+        logDebug('Published follow list to relays:', Array.from(publishedRelays).map((relay) => relay.url));
+
+        addEvent(event);
         return event;
     } catch (error) {
         console.error('Error publishing follow list:', error);
@@ -245,7 +279,7 @@ export async function publishFollowList(
 /**
  * Delete a follow list by its ID
  */
-export async function deleteFollowList(eventId: string): Promise<boolean> {
+export async function deleteFollowList(eventId: string, identifier?: string, pubkey?: string): Promise<boolean> {
     logDebug('Deleting follow list event ID:', eventId);
 
     try {
@@ -257,14 +291,15 @@ export async function deleteFollowList(eventId: string): Promise<boolean> {
         const event = new NDKEvent(ndk);
         event.kind = 5; // Deletion request
 
-        // Get the current user's pubkey
-        const userPubkey = await (window as any).nostr.getPublicKey();
-
         // Add an e-tag for the event ID
         event.tags.push(['e', eventId]);
 
         // Add the a-tag for parametrized replaceable event
-        event.tags.push(['a', `${FOLLOW_LIST_KIND}:${userPubkey}:${eventId}`]);
+        if (identifier && currentUser?.pubkey) {
+            event.tags.push(['a', `${FOLLOW_LIST_KIND}:${currentUser.pubkey}:${identifier}`]);
+        } else if (pubkey && identifier) {
+            event.tags.push(['a', `${FOLLOW_LIST_KIND}:${pubkey}:${identifier}`]);
+        }
 
         // Add k-tag for the kind being deleted
         event.tags.push(['k', FOLLOW_LIST_KIND.toString()]);
@@ -276,7 +311,8 @@ export async function deleteFollowList(eventId: string): Promise<boolean> {
         await event.sign();
         logDebug('Signed deletion event with ID:', event.id);
 
-        await event.publish();
+        const relaySet = buildPublishRelaySet(currentUser);
+        await event.publish(relaySet);
 
         return true;
     } catch (error) {
@@ -285,4 +321,3 @@ export async function deleteFollowList(eventId: string): Promise<boolean> {
         return false;
     }
 }
-

@@ -5,10 +5,12 @@
   import { goto } from '$app/navigation';
 
   import { getFollowLists, LIST_LIMIT, getAuthorProfile, getProfileInfoForEntries } from '$lib/services/follow-list.service';
-  import type { FollowList } from '$lib/types/follow-list';
+  import { FOLLOW_LIST_KIND, type FollowList, parseFollowListEvent } from '$lib/types/follow-list';
   import { getRelativeTime } from '$lib/utils/date';
   import ProfileImage from '$lib/components/ProfileImage.svelte';
   import { initializeAuth } from '$lib/services/auth';
+  import { buildFollowListPath } from '$lib/utils/naddr';
+  import { eventsStore, selectParameterizedEvent, type EventsState } from '$lib/stores/events';
   type FilterType = "none" | "follows" | "included" | "ours";
   const FILTER_NONE: FilterType = "none";
   const FILTER_USER_FOLLOWS: FilterType = "follows";
@@ -169,6 +171,15 @@
       }
   }
 
+  function getFollowListHref(list: FollowList) {
+    try {
+      return buildFollowListPath(list.id, list.pubkey);
+    } catch (err) {
+      console.error('Failed to encode follow list link:', err);
+      return `/d/${list.id}?p=${list.pubkey}`;
+    }
+  }
+
   onMount(async () => {
     const currentUser = get(user);
     // Load filter preference from localStorage
@@ -192,6 +203,44 @@
       loading = false;
     }
   });
+
+  $: syncFollowListsFromEvents($eventsStore);
+
+  function syncFollowListsFromEvents(eventsState: EventsState) {
+    if (!followLists.length || !eventsState) return;
+
+    const previousEventIds = followLists.map((list) => list.eventId);
+    let changed = false;
+
+    const updatedLists = followLists.map((list) => {
+      const event = selectParameterizedEvent(eventsState, FOLLOW_LIST_KIND, list.pubkey, list.id);
+      if (!event || event.id === list.eventId) {
+        return list;
+      }
+
+      const parsed = parseFollowListEvent(event);
+      if (!parsed) {
+        return list;
+      }
+
+      changed = true;
+      return {
+        ...parsed,
+        authorName: list.authorName,
+        authorPicture: list.authorPicture
+      };
+    });
+
+    if (changed) {
+      followLists = updatedLists;
+
+      updatedLists.forEach((list, index) => {
+        if (list.eventId !== previousEventIds[index]) {
+          loadProfilesForList(index);
+        }
+      });
+    }
+  }
   
   // Function to load profiles for entries in a specific list
   async function loadProfilesForList(listIndex: number) {
@@ -339,7 +388,7 @@
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {#each followLists as list}
           <a 
-            href="/d/{list.id}?p={list.pubkey}" 
+            href={getFollowListHref(list)} 
             class="bg-white rounded-lg shadow-sm overflow-hidden transition-transform hover:scale-[1.02]"
           >
             <!-- Cover image -->

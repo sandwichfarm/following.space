@@ -10,6 +10,7 @@
   import type { FollowListEntry } from '$lib/types/follow-list';
   import PublicKeyDisplay from '$lib/components/PublicKeyDisplay.svelte';
   import ProfileImage from '$lib/components/ProfileImage.svelte';
+  import { buildFollowListPath } from '$lib/utils/naddr';
   const DEBUG = true;
   const logDebug = (...args: any[]) => {
     if (DEBUG) console.log('[Create Page]', ...args);
@@ -35,10 +36,29 @@
   let deleting = false;
   let loading = false;
   let showRemoveAllConfirm = false;
+  let followListAuthorPubkey = '';
   
   // Validation state
   let nameValid = true;
   let entriesValid = true;
+
+  function preventEnterKey(node: HTMLElement) {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.key === 'Enter' &&
+        e.target instanceof HTMLElement &&
+        e.target.tagName !== 'TEXTAREA'
+      ) {
+        e.preventDefault();
+      }
+    };
+    node.addEventListener('keydown', handler);
+    return {
+      destroy() {
+        node.removeEventListener('keydown', handler);
+      }
+    };
+  }
   
   onMount(async () => {
     // Check if we're in edit mode
@@ -68,7 +88,7 @@
     
     deleting = true;
     try {
-      const deleted = await deleteFollowList(listEventId);
+      const deleted = await deleteFollowList(listEventId, listId, $user?.pubkey || followListAuthorPubkey);
       if (deleted) {
         // Navigate back to home
         goto('/');
@@ -114,6 +134,7 @@
       description = list.description || '';
       listId = list.id;
       listEventId = list.eventId;
+      followListAuthorPubkey = list.pubkey;
       selectedEntries = [...list.entries];
 
       // reactively get profile info for each entry
@@ -325,7 +346,12 @@
           logDebug('Publish failed - no ID returned');
           return;
         }
-        goto(`/d/${dTag[1]}?p=${event.pubkey}`);
+        try {
+          goto(buildFollowListPath(dTag[1], event.pubkey));
+        } catch (err) {
+          console.error('Failed to build naddr link, falling back to legacy route:', err);
+          goto(`/d/${dTag[1]}?p=${event.pubkey}`);
+        }
       } else {
         error = 'Failed to publish follow list. Please try again.';
         logDebug('Publish failed - no ID returned');
@@ -417,12 +443,8 @@
       {/if}
       
       <form 
+        use:preventEnterKey
         on:submit|preventDefault={handleSubmit} 
-        on:keydown={(e) => {
-          if (e.key === 'Enter' && e.target instanceof HTMLElement && e.target.tagName !== 'TEXTAREA') {
-            e.preventDefault();
-          }
-        }}
         class="bg-white shadow-sm rounded-lg overflow-hidden"
       >
         <div class="p-6 border-b">
@@ -672,6 +694,7 @@
                           disabled={i === 0}
                           class="text-gray-500 hover:text-purple-600 disabled:opacity-30 disabled:hover:text-gray-500 focus:outline-none"
                           title="Move up"
+                          aria-label="Move entry up"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />
@@ -683,6 +706,7 @@
                           disabled={i === selectedEntries.length - 1}
                           class="text-gray-500 hover:text-purple-600 disabled:opacity-30 disabled:hover:text-gray-500 focus:outline-none"
                           title="Move down"
+                          aria-label="Move entry down"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 011.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
